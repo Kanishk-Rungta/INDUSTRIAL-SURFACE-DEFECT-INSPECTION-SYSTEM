@@ -38,16 +38,26 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
 
     if settings.is_serverless and not settings.is_mock and not settings.uses_mongodb:
-        raise RuntimeError(
+        app.state.startup_error = (
             "Real Vercel deployments require MONGODB_URI. Add it in the Vercel "
             "project's Environment Variables and redeploy."
         )
+        yield
+        return
 
     if settings.uses_mongodb:
         from app.database.mongo import connect_mongo, ensure_reference_data
 
-        mongo = connect_mongo(settings)
-        ensure_reference_data(mongo, settings)
+        try:
+            mongo = connect_mongo(settings)
+            ensure_reference_data(mongo, settings)
+        except Exception as exc:  # The health endpoint must survive bad cloud configuration.
+            app.state.startup_error = (
+                f"MongoDB initialization failed ({type(exc).__name__}). Check MONGODB_URI, "
+                "the Atlas database user's permissions, and Atlas Network Access."
+            )
+            yield
+            return
 
     # Vercel functions can write only to /tmp. Start each warm function instance from
     # the read-only database shipped in the deployment bundle.
@@ -106,6 +116,17 @@ def create_app() -> FastAPI:
     templates.env.globals["app_title"] = "Surface Defect Inspection"
     app.state.templates = templates
     app.state.settings = settings
+    app.state.startup_error = None
+
+    @app.middleware("http")
+    async def startup_failure_response(request: Request, call_next):
+        error = getattr(request.app.state, "startup_error", None)
+        if error and request.url.path != "/healthz":
+            return JSONResponse(
+                status_code=503,
+                content={"status": "configuration_error", "detail": error},
+            )
+        return await call_next(request)
 
     app.include_router(pages.router)
     app.include_router(api_inspections.router)
@@ -149,7 +170,13 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> dict[str, str]:
+    async def healthz():
+        error = getattr(app.state, "startup_error", None)
+        if error:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "configuration_error", "detail": error},
+            )
         return {"status": "ok", "provider": settings.inspection_provider}
 
     return app

@@ -58,6 +58,27 @@ def test_mongodb_is_selected_only_when_uri_is_configured():
     assert Settings(_env_file=None, mongodb_uri="mongodb+srv://example.invalid/db").uses_mongodb
 
 
+def test_missing_mongodb_uri_returns_diagnostic_instead_of_crashing(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.config import reset_settings_cache
+    from app.main import create_app
+
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("INSPECTION_PROVIDER", "real")
+    monkeypatch.setenv("MONGODB_URI", "")
+    monkeypatch.setenv("VISION404_TMP_DIR", str(tmp_path / "vercel-runtime"))
+    reset_settings_cache()
+    try:
+        with TestClient(create_app()) as client:
+            response = client.get("/healthz")
+            assert response.status_code == 503
+            assert response.json()["status"] == "configuration_error"
+            assert "MONGODB_URI" in response.json()["detail"]
+    finally:
+        reset_settings_cache()
+
+
 def test_serverless_paths_use_tmp(monkeypatch):
     from app.config import Settings
 
