@@ -44,6 +44,12 @@ def test_vercel_requirements_include_real_inference_and_mongodb():
         assert dependency in requirements
 
 
+def test_pyproject_declares_vercel_runtime_dependencies():
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
+    for dependency in ("fastapi", "pymongo", "onnxruntime", "opencv-python-headless", "scikit-image"):
+        assert dependency in pyproject
+
+
 def test_vercel_config_uses_real_bundled_model():
     config = (ROOT / "vercel.json").read_text(encoding="utf-8")
     assert '"INSPECTION_PROVIDER": "real"' in config
