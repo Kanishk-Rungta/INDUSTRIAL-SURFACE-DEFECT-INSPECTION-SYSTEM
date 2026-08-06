@@ -51,6 +51,9 @@ pipeline.
 - Searchable inspection history and region detail pages
 - CSV and JSON exports
 - Local batch processing
+- Analytics dashboard: an outcome-mix, defect-class and throughput chart per batch
+  session, plus a cross-session trend view, all server-rendered SVG (no chart library,
+  no JavaScript dependency)
 - Model, database, storage and disk status checks
 - No required cloud service, remote inference endpoint or internet connection at runtime
 
@@ -88,7 +91,7 @@ not change the model path.
 | `app/inference.py` | Canonical ONNX model pipeline |
 | `app/postprocess.py` | Thresholds, connected regions and measurements |
 | `app/providers/` | Real and mock provider boundary |
-| `app/services/` | Inspection, batch, history, export and status logic |
+| `app/services/` | Inspection, batch, history, export, status and analytics logic |
 | `app/repositories/` | SQLite persistence queries |
 | `app/routes/` | Page, API and controlled media routes |
 | `app/templates/` | Server-rendered interface |
