@@ -56,6 +56,49 @@ def test_relative_traversal_in_a_stored_path_is_refused(settings):
     assert image_path_for({"source_image_path": "../../../etc/passwd"}, "source", settings) is None
 
 
+def test_dockerfile_runs_mock_mode_only():
+    """The container path (docs/DEPLOYMENT.md §0) must never run real inference.
+
+    A public host and a factory image are incompatible by design (NFR-05); the image
+    should not even have the inference stack installed for `real` mode to fall back to.
+    """
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "INSPECTION_PROVIDER=mock" in text
+    install_lines = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("#")
+    ).lower()
+    for package in ("onnxruntime", "opencv", "scikit-image"):
+        assert package not in install_lines
+
+
+def test_dockerfile_respects_the_hosting_platform_port_and_binds_publicly():
+    """Render/Railway/Fly.io/Cloud Run all inject $PORT; the local default stays 8000."""
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "${PORT:-8000}" in text
+    assert "--host 0.0.0.0" in text
+    assert "HEALTHCHECK" in text
+
+
+def test_dockerignore_excludes_the_training_corpus():
+    text = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+    for entry in ("data/", ".venv-app/", ".git/", "bench/", "dataset/"):
+        assert entry in text
+
+
+def test_render_blueprint_builds_the_dockerfile_in_mock_mode():
+    """render.yaml is what makes `New + -> Blueprint` on Render need zero manual setup.
+
+    Kept as a plain text check, not a YAML parse: no test dependency here should force
+    PyYAML into requirements-dev.txt just to read six lines of config.
+    """
+    text = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    assert "runtime: docker" in text
+    assert "dockerfilePath: ./Dockerfile" in text
+    assert "plan: free" in text
+    assert "healthCheckPath: /healthz" in text
+    assert "value: mock" in text
+
+
 def test_relative_paths_resolve_against_local_data_root(seeded, settings):
     from app.services.inspection_service import image_path_for, portable_media_path
 
