@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
     # Vercel functions can write only to /tmp. Start each warm function instance from
     # the read-only database shipped in the deployment bundle.
-    if settings.is_serverless and not settings.db_file.exists():
+    if settings.is_serverless and not settings.uses_mongodb and not settings.db_file.exists():
         if not settings.bundled_db_file.is_file():
             raise RuntimeError(
                 "The bundled demo database is missing. Run "

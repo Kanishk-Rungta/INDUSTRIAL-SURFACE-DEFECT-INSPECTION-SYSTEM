@@ -22,8 +22,9 @@ Browser -> one Vercel domain -> FastAPI Python Function -> MongoDB Atlas
   skeletonization is implemented locally to keep scikit-image/SciPy out of the bundle.
 - MongoDB stores inspection documents, embedded regions, batch sessions, reference
   records, source images, and overlays.
-- The bundled SQLite database is used only to bootstrap stable materials, profiles,
-  classes, station, and model metadata into an empty MongoDB database.
+- An empty MongoDB database is bootstrapped idempotently from application profile,
+  model configuration, and the bundled coverage-metrics JSON. Vercel does not need a
+  SQLite database.
 - No MongoDB credential is stored in Git or `vercel.json`.
 
 ## 1. Create MongoDB Atlas
