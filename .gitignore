@@ -71,6 +71,11 @@ data/sources/real/
 data/overlays/real/
 data/exports/
 
+# Production inference artefact: deliberately shipped with the Vercel function.
+!data/export/
+data/export/*
+!data/export/model.onnx
+
 # Benchmark RESULTS are evidence and belong in git; benchmark WEIGHTS do not.
 # 23 checkpoints is 139 MB, and the .json next to each one already records the
 # metrics, the args and the split hash that produced it.

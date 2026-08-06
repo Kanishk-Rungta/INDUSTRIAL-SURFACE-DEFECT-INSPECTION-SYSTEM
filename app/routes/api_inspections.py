@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response

@@ -569,6 +569,7 @@ automatically free of that restriction.
 
 ## Deployment status
 
-Vercel and other serverless deployment paths are retired. The supported deployment is
-a persistent local FastAPI process with a local ONNX model, SQLite database and local
-media directories. Normal inspection requires no internet connection.
+Vercel is supported with the real CPU ONNX model and MongoDB Atlas persistence. The UI
+and FastAPI backend deploy together as one Vercel project; `MONGODB_URI` is configured
+as a server-side environment variable. A station may still run persistently with local
+SQLite and media when offline operation is required.

@@ -1,4 +1,4 @@
-"""Local-only deployment and portable-path guarantees."""
+"""Local and Vercel deployment guarantees."""
 
 from pathlib import Path
 
@@ -31,16 +31,46 @@ def test_runtime_paths_stay_under_the_local_data_root():
         assert path.resolve().is_relative_to((ROOT / "data").resolve())
 
 
-def test_no_vercel_entry_or_configuration_remains():
-    assert not (ROOT / "vercel.json").exists()
-    assert not (ROOT / ".vercelignore").exists()
-    assert not (ROOT / "api" / "index.py").exists()
+def test_vercel_entry_and_configuration_exist():
+    assert (ROOT / "vercel.json").is_file()
+    assert (ROOT / ".vercelignore").is_file()
+    assert (ROOT / "api" / "index.py").is_file()
 
 
-def test_runtime_requirements_include_local_cpu_inference():
+def test_vercel_requirements_include_real_inference_and_mongodb():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
-    for dependency in ("fastapi", "onnxruntime", "opencv-python-headless", "scikit-image"):
+    assert "fastapi" in requirements
+    for dependency in ("pymongo", "onnxruntime", "opencv-python-headless", "scikit-image"):
         assert dependency in requirements
+
+
+def test_vercel_config_uses_real_bundled_model():
+    config = (ROOT / "vercel.json").read_text(encoding="utf-8")
+    assert '"INSPECTION_PROVIDER": "real"' in config
+    assert '"data/export/model.onnx"' in config
+    assert (ROOT / "data" / "export" / "model.onnx").is_file()
+
+
+def test_mongodb_is_selected_only_when_uri_is_configured():
+    from app.config import Settings
+
+    assert not Settings(_env_file=None, mongodb_uri="").uses_mongodb
+    assert Settings(_env_file=None, mongodb_uri="mongodb+srv://example.invalid/db").uses_mongodb
+
+
+def test_serverless_paths_use_tmp(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("VERCEL", "1")
+    settings = Settings(
+        _env_file=None,
+        data_root=Path("data"),
+        database_path=Path("data/inspection.db"),
+    )
+    assert settings.is_serverless
+    assert settings.runtime_data_dir == Path("/tmp/vision404")
+    assert settings.db_file == Path("/tmp/vision404/inspection.db")
+    assert settings.run_batches_synchronously
 
 
 def test_stored_image_paths_are_relative_to_data_root(settings):

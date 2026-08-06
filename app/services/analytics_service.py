@@ -16,6 +16,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from app.database.mongo import is_mongo
 from app.repositories import batch_repository as batches
 from app.services import batch_service, charts
 
@@ -66,10 +67,13 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
 
 
 def latency_stats(conn: sqlite3.Connection, batch_run_id: int) -> dict[str, float | int | None]:
-    rows = conn.execute(
+    if is_mongo(conn):
+        rows = conn.db.inspections.find({"batch_run_id": batch_run_id, "latency_ms": {"$ne": None}}, {"latency_ms": 1}).sort("latency_ms", 1)
+    else:
+        rows = conn.execute(
         "SELECT latency_ms FROM inspection WHERE batch_run_id = ? AND latency_ms IS NOT NULL ORDER BY latency_ms",
         [batch_run_id],
-    ).fetchall()
+        ).fetchall()
     values = [float(r["latency_ms"]) for r in rows]
     if not values:
         return {"avg": None, "median": None, "p95": None, "max": None, "count": 0}
@@ -84,10 +88,13 @@ def latency_stats(conn: sqlite3.Connection, batch_run_id: int) -> dict[str, floa
 
 def _timeline_points(conn: sqlite3.Connection, batch_run_id: int, started_at: str | None) -> list[tuple[float, int]]:
     """Cumulative processed count over elapsed run minutes, for the run's trend line."""
-    rows = conn.execute(
+    if is_mongo(conn):
+        rows = conn.db.inspections.find({"batch_run_id": batch_run_id}, {"processed_at": 1}).sort([("processed_at", 1), ("inspection_id", 1)])
+    else:
+        rows = conn.execute(
         "SELECT processed_at FROM inspection WHERE batch_run_id = ? ORDER BY processed_at, inspection_id",
         [batch_run_id],
-    ).fetchall()
+        ).fetchall()
     start = _parse_dt(started_at)
     points: list[tuple[float, int]] = []
     for i, row in enumerate(rows, start=1):
@@ -156,15 +163,21 @@ def overview(conn: sqlite3.Connection, limit: int = 15) -> dict[str, Any]:
     sessions = [{"run": run, "totals": batch_service.compute_totals(conn, run["batch_run_id"])} for run in recent]
     sessions.sort(key=lambda s: s["run"]["batch_run_id"])  # chronological for the trend charts
 
-    agg_rows = conn.execute(
-        "SELECT status, COUNT(*) AS n FROM inspection WHERE batch_run_id IS NOT NULL GROUP BY status"
-    ).fetchall()
-    agg_totals = {r["status"]: int(r["n"]) for r in agg_rows}
+    if is_mongo(conn):
+        agg_rows = conn.db.inspections.aggregate([{"$match": {"batch_run_id": {"$ne": None}}}, {"$group": {"_id": "$status", "n": {"$sum": 1}}}])
+        agg_totals = {r["_id"]: int(r["n"]) for r in agg_rows}
+    else:
+        agg_rows = conn.execute("SELECT status, COUNT(*) AS n FROM inspection WHERE batch_run_id IS NOT NULL GROUP BY status").fetchall()
+        agg_totals = {r["status"]: int(r["n"]) for r in agg_rows}
     for key in STATUS_ORDER:
         agg_totals.setdefault(key, 0)
     agg_processed = sum(agg_totals[k] for k in STATUS_ORDER)
 
-    region_rows = conn.execute(
+    if is_mongo(conn):
+        region_rows = conn.db.inspections.aggregate([{"$match": {"batch_run_id": {"$ne": None}}}, {"$unwind": "$regions"}, {"$group": {"_id": "$regions.class_code", "n": {"$sum": 1}}}])
+        agg_regions = {r["_id"]: int(r["n"]) for r in region_rows}
+    else:
+        region_rows = conn.execute(
         """
         SELECT c.class_code AS class_code, COUNT(*) AS n
         FROM defect_region r
@@ -173,12 +186,12 @@ def overview(conn: sqlite3.Connection, limit: int = 15) -> dict[str, Any]:
         WHERE i.batch_run_id IS NOT NULL
         GROUP BY c.class_code
         """
-    ).fetchall()
-    agg_regions = {r["class_code"]: int(r["n"]) for r in region_rows}
+        ).fetchall()
+        agg_regions = {r["class_code"]: int(r["n"]) for r in region_rows}
     agg_regions.setdefault("crack", 0)
     agg_regions.setdefault("scratch", 0)
 
-    session_count = int(conn.execute("SELECT COUNT(*) AS n FROM batch_run").fetchone()["n"])
+    session_count = batches.count(conn)
 
     clean_pct_trend = [
         round(s["totals"]["clean"] / s["totals"]["processed"] * 100, 1) if s["totals"]["processed"] else 0.0

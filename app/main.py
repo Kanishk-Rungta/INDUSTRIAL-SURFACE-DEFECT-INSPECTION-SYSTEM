@@ -5,13 +5,15 @@ Run with either:
     python -m app.main
     uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-Nothing here opens an outbound connection.  There is no CDN, no web font, no analytics
-and no telemetry: every asset is served from app/static, and the runtime works with the
-network cable out (NFR-05 / T-20).
+Nothing here opens an outbound connection. There is no CDN, web font, external usage
+analytics, or telemetry: every asset is served from app/static, and the runtime works
+with the network cable out (NFR-05 / T-20). The local `/analytics` screen only
+summarises inspection rows already stored in this application's database.
 """
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,14 +36,37 @@ BASE_DIR = Path(__file__).resolve().parent
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_dirs()
-    init_database(settings.db_file)
+
+    if settings.is_serverless and not settings.is_mock and not settings.uses_mongodb:
+        raise RuntimeError(
+            "Real Vercel deployments require MONGODB_URI. Add it in the Vercel "
+            "project's Environment Variables and redeploy."
+        )
+
+    if settings.uses_mongodb:
+        from app.database.mongo import connect_mongo, ensure_reference_data
+
+        mongo = connect_mongo(settings)
+        ensure_reference_data(mongo, settings)
+
+    # Vercel functions can write only to /tmp. Start each warm function instance from
+    # the read-only database shipped in the deployment bundle.
+    if settings.is_serverless and not settings.db_file.exists():
+        if not settings.bundled_db_file.is_file():
+            raise RuntimeError(
+                "The bundled demo database is missing. Run "
+                "`python -m scripts.build_demo_bundle` before deploying."
+            )
+        shutil.copy2(settings.bundled_db_file, settings.db_file)
+    if not settings.uses_mongodb:
+        init_database(settings.db_file)
 
     # Mock mode is expected to be demonstrable the moment it starts, so an empty
     # database seeds itself once.  Real mode never fabricates rows, and a serverless
     # host never seeds on demand: seeding generates hundreds of images and takes
     # minutes, far beyond any function timeout. There the database is built during
     # deployment by scripts/build_demo_bundle.py.
-    if settings.is_mock:
+    if settings.is_mock and not settings.is_serverless:
         conn = connect(settings.db_file)
         try:
             needs_seed = not database_is_seeded(conn)

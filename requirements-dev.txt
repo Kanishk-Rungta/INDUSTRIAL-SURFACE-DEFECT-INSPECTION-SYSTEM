@@ -6,3 +6,4 @@ httpx>=0.27
 playwright>=1.44
 ruff>=0.4
 mypy>=1.10
+mongomock>=4.3

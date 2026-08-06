@@ -1,0 +1,36 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": [
+        "app/static/**",
+        "app/templates/**",
+        "app/database/schema.sql",
+        "data/inspection.db",
+        "data/export/model.onnx",
+        "data/metrics/**",
+        "data/sources/mock/**",
+        "data/overlays/mock/**",
+        "data/batches/**"
+      ]
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index.py" }
+  ],
+  "env": {
+    "APP_ENV": "production",
+    "DEMO_MODE": "false",
+    "INSPECTION_PROVIDER": "real",
+    "MODEL_PATH": "data/export/model.onnx",
+    "MODEL_SHA256": "DF411260E21EC6361E97D4754B0C3F6920B7F5C2F6EC32C034CEF17C3576B42D",
+    "MONGODB_DATABASE": "vision404",
+    "BATCH_SYNCHRONOUS": "true",
+    "MIN_FREE_DISK_GB": "0",
+    "MAX_UPLOAD_MB": "4",
+    "MAX_IMAGE_WIDTH": "2048",
+    "MAX_IMAGE_HEIGHT": "2048"
+  }
+}

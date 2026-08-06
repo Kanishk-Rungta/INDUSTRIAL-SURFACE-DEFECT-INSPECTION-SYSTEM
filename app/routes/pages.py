@@ -109,10 +109,7 @@ def region_detail(
         row = inspections.latest(conn, settings.station_id) or inspections.latest(conn)
         # Prefer something that actually has regions to look at.
         if row is None or int(row["region_count"] or 0) == 0:
-            candidate = conn.execute(
-                "SELECT inspection_id FROM inspection WHERE region_count > 0 "
-                "ORDER BY captured_at DESC, inspection_id DESC LIMIT 1"
-            ).fetchone()
+            candidate = inspections.latest_with_regions(conn)
             inspection_id = int(candidate["inspection_id"]) if candidate else (
                 int(row["inspection_id"]) if row else None
             )

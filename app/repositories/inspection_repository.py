@@ -11,6 +11,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.database.mongo import is_mongo, next_id
+
 SELECT_COLUMNS = """
     i.inspection_id,
     i.product_id,
@@ -166,12 +168,20 @@ def _where(filters: HistoryFilters) -> tuple[str, list[Any]]:
 
 
 def count(conn: sqlite3.Connection, filters: HistoryFilters) -> int:
+    if is_mongo(conn):
+        return int(conn.db.inspections.count_documents(_mongo_filter(filters)))
     where, params = _where(filters)
     sql = f"SELECT COUNT(*) AS n {BASE_FROM} {where}"
     return int(conn.execute(sql, params).fetchone()["n"])
 
 
 def search(conn: sqlite3.Connection, filters: HistoryFilters) -> Page:
+    if is_mongo(conn):
+        total = count(conn, filters)
+        page_size = max(1, min(200, filters.page_size))
+        page_no = max(1, filters.page)
+        cursor = conn.db.inspections.find(_mongo_filter(filters), {"_id": 0, "regions": 0}).sort([("captured_at", -1), ("inspection_id", -1)]).skip((page_no - 1) * page_size).limit(page_size)
+        return Page(rows=list(cursor), total=total, page=page_no, page_size=page_size)
     where, params = _where(filters)
     total = count(conn, filters)
     page_size = max(1, min(200, filters.page_size))
@@ -188,6 +198,8 @@ def search(conn: sqlite3.Connection, filters: HistoryFilters) -> Page:
 
 def all_matching(conn: sqlite3.Connection, filters: HistoryFilters) -> list[dict[str, Any]]:
     """Every matching row, unpaginated - used by exports so totals always reconcile."""
+    if is_mongo(conn):
+        return list(conn.db.inspections.find(_mongo_filter(filters), {"_id": 0, "regions": 0}).sort([("captured_at", -1), ("inspection_id", -1)]))
     where, params = _where(filters)
     sql = f"SELECT {SELECT_COLUMNS} {BASE_FROM} {where} ORDER BY i.captured_at DESC, i.inspection_id DESC"
     return [dict(r) for r in conn.execute(sql, params)]
@@ -195,6 +207,13 @@ def all_matching(conn: sqlite3.Connection, filters: HistoryFilters) -> list[dict
 
 def status_totals(conn: sqlite3.Connection, filters: HistoryFilters) -> dict[str, int]:
     """Counts per status for the same filter set the table and the export use."""
+    if is_mongo(conn):
+        pipeline = [{"$match": _mongo_filter(filters)}, {"$group": {"_id": "$status", "n": {"$sum": 1}}}]
+        totals = {r["_id"]: int(r["n"]) for r in conn.db.inspections.aggregate(pipeline)}
+        for key in ("regions_found", "clean", "acquisition_failure", "processing_failure"):
+            totals.setdefault(key, 0)
+        totals["processed"] = sum(totals[k] for k in ("regions_found", "clean", "acquisition_failure", "processing_failure"))
+        return totals
     where, params = _where(filters)
     sql = f"SELECT i.status AS status, COUNT(*) AS n {BASE_FROM} {where} GROUP BY i.status"
     totals = {r["status"]: int(r["n"]) for r in conn.execute(sql, params)}
@@ -207,6 +226,13 @@ def status_totals(conn: sqlite3.Connection, filters: HistoryFilters) -> dict[str
 
 
 def region_totals(conn: sqlite3.Connection, filters: HistoryFilters) -> dict[str, int]:
+    if is_mongo(conn):
+        pipeline = [{"$match": _mongo_filter(filters)}, {"$unwind": "$regions"}, {"$group": {"_id": "$regions.class_code", "n": {"$sum": 1}}}]
+        counts = {r["_id"]: int(r["n"]) for r in conn.db.inspections.aggregate(pipeline)}
+        counts.setdefault("crack", 0)
+        counts.setdefault("scratch", 0)
+        counts["total"] = counts["crack"] + counts["scratch"]
+        return counts
     where, params = _where(filters)
     sql = (
         "SELECT c.class_code AS class_code, COUNT(*) AS n "
@@ -222,6 +248,8 @@ def region_totals(conn: sqlite3.Connection, filters: HistoryFilters) -> dict[str
 
 
 def get(conn: sqlite3.Connection, inspection_id: int) -> dict[str, Any] | None:
+    if is_mongo(conn):
+        return conn.db.inspections.find_one({"inspection_id": inspection_id}, {"_id": 0, "regions": 0})
     sql = f"SELECT {SELECT_COLUMNS} {BASE_FROM} WHERE i.inspection_id = ?"
     row = conn.execute(sql, [inspection_id]).fetchone()
     return dict(row) if row else None
@@ -235,6 +263,9 @@ def latest(conn: sqlite3.Connection, station_code: str | None = None) -> dict[st
     image, or a demo run seeded against a fixed anchor date, appear to be the live part.
     History is ordered by captured_at, which is the right axis there.
     """
+    if is_mongo(conn):
+        query = {"station_code": station_code} if station_code else {}
+        return conn.db.inspections.find_one(query, {"_id": 0, "regions": 0}, sort=[("inspection_id", -1)])
     where = "WHERE s.station_code = ?" if station_code else ""
     params = [station_code] if station_code else []
     sql = f"SELECT {SELECT_COLUMNS} {BASE_FROM} {where} ORDER BY i.inspection_id DESC LIMIT 1"
@@ -243,6 +274,9 @@ def latest(conn: sqlite3.Connection, station_code: str | None = None) -> dict[st
 
 
 def regions(conn: sqlite3.Connection, inspection_id: int) -> list[dict[str, Any]]:
+    if is_mongo(conn):
+        row = conn.db.inspections.find_one({"inspection_id": inspection_id}, {"regions": 1})
+        return sorted((row or {}).get("regions", []), key=lambda r: r["region_index"])
     sql = """
         SELECT r.region_id, r.region_index, c.class_code, c.display_name,
                r.area_px, r.length_px, r.max_width_px,
@@ -264,6 +298,12 @@ def region(conn: sqlite3.Connection, inspection_id: int, region_index: int) -> d
 
 
 def class_breakdown(conn: sqlite3.Connection, inspection_id: int) -> dict[str, int]:
+    if is_mongo(conn):
+        out: dict[str, int] = {}
+        for row in regions(conn, inspection_id):
+            code = row["class_code"]
+            out[code] = out.get(code, 0) + 1
+        return out
     sql = """
         SELECT c.class_code AS class_code, COUNT(*) AS n
         FROM defect_region r JOIN defect_class c ON c.class_id = r.class_id
@@ -273,10 +313,29 @@ def class_breakdown(conn: sqlite3.Connection, inspection_id: int) -> dict[str, i
 
 
 def total_count(conn: sqlite3.Connection) -> int:
+    if is_mongo(conn):
+        return int(conn.db.inspections.count_documents({}))
     return int(conn.execute("SELECT COUNT(*) AS n FROM inspection").fetchone()["n"])
 
 
 def insert(conn: sqlite3.Connection, values: dict[str, Any]) -> int:
+    if is_mongo(conn):
+        inspection_id = next_id(conn, "inspection")
+        refs = conn.db.reference
+        material = refs.find_one({"kind": "material", "material_id": values.get("material_id")}) or {}
+        station = refs.find_one({"kind": "station", "station_id": values["station_id"]}) or {}
+        model = refs.find_one({"kind": "model", "model_version_id": values["model_version_id"]}) or {}
+        profile = refs.find_one({"kind": "profile", "profile_id": values["profile_id"]}) or {}
+        doc = {"inspection_id": inspection_id, **values, "regions": [],
+               "material_code": material.get("material_code"), "material_name": material.get("material_name"),
+               "support_status": material.get("support_status"), "station_code": station.get("station_code"),
+               "model_version": model.get("version"), "model_file_name": model.get("file_name"),
+               "artefact_sha256": model.get("artefact_sha256"), "profile_version": profile.get("version_no"),
+               "crack_threshold": profile.get("crack_threshold"), "scratch_threshold": profile.get("scratch_threshold"),
+               "minimum_area_px": profile.get("minimum_area_px"), "minimum_skeleton_px": profile.get("minimum_skeleton_px"),
+               "max_length_px": 0.0}
+        conn.db.inspections.insert_one(doc)
+        return inspection_id
     columns = [
         "station_id",
         "profile_id",
@@ -304,6 +363,12 @@ def insert(conn: sqlite3.Connection, values: dict[str, Any]) -> int:
 
 
 def insert_region(conn: sqlite3.Connection, inspection_id: int, values: dict[str, Any]) -> int:
+    if is_mongo(conn):
+        cls = conn.db.reference.find_one({"kind": "defect_class", "class_id": values["class_id"]}) or {}
+        region_id = next_id(conn, "region")
+        doc = {"region_id": region_id, **values, "class_code": cls.get("class_code"), "display_name": cls.get("display_name")}
+        conn.db.inspections.update_one({"inspection_id": inspection_id}, {"$push": {"regions": doc}, "$max": {"max_length_px": values["length_px"]}})
+        return region_id
     cur = conn.execute(
         """
         INSERT INTO defect_region
@@ -331,9 +396,43 @@ def insert_region(conn: sqlite3.Connection, inspection_id: int, values: dict[str
 
 def distinct_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
     """Filter dropdown options, taken from the data rather than hardcoded."""
+    if is_mongo(conn):
+        return {
+            "materials": [r["material_code"] for r in conn.db.reference.find({"kind": "material"}).sort("material_id", 1)],
+            "stations": [r["station_code"] for r in conn.db.reference.find({"kind": "station"}).sort("station_id", 1)],
+            "classes": [r["class_code"] for r in conn.db.reference.find({"kind": "defect_class"}).sort("class_id", 1)],
+        }
     materials = [
         r["material_code"] for r in conn.execute("SELECT material_code FROM material ORDER BY material_id")
     ]
     stations = [r["station_code"] for r in conn.execute("SELECT station_code FROM station ORDER BY station_id")]
     classes = [r["class_code"] for r in conn.execute("SELECT class_code FROM defect_class ORDER BY class_id")]
     return {"materials": materials, "stations": stations, "classes": classes}
+
+
+def latest_with_regions(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    if is_mongo(conn):
+        return conn.db.inspections.find_one({"region_count": {"$gt": 0}}, {"_id": 0, "regions": 0}, sort=[("captured_at", -1), ("inspection_id", -1)])
+    row = conn.execute("SELECT inspection_id FROM inspection WHERE region_count > 0 ORDER BY captured_at DESC, inspection_id DESC LIMIT 1").fetchone()
+    return {"inspection_id": row["inspection_id"]} if row else None
+
+
+def _mongo_filter(filters: HistoryFilters) -> dict[str, Any]:
+    query: dict[str, Any] = {}
+    if filters.date_from or filters.date_to:
+        query["captured_at"] = {}
+        if filters.date_from:
+            query["captured_at"]["$gte"] = filters.date_from
+        if filters.date_to:
+            end = filters.date_to
+            query["captured_at"]["$lte"] = end if len(end) > 10 else f"{end}T23:59:59.999999"
+    for name, value in (("material_code", filters.material), ("status", filters.status), ("station_code", filters.station), ("batch_run_id", filters.batch_run_id)):
+        if value is not None:
+            query[name] = value
+    if filters.product_id:
+        import re
+        pattern = re.escape(filters.product_id).replace(r"\*", ".*")
+        query["product_id"] = {"$regex": pattern, "$options": "i"}
+    if filters.defect_class:
+        query["regions.class_code"] = filters.defect_class
+    return query

@@ -13,9 +13,10 @@ pydantic-settings>=2.2,<3.0
 python-multipart>=0.0.9
 numpy>=1.26
 pillow>=10.3
+pymongo>=4.10,<5.0
 onnxruntime>=1.18
 opencv-python-headless>=4.10
 scikit-image>=0.24
 
-# The inference core needs these; they are NOT required in mock mode and are left
-# commented so a demo deployment stays small. Uncomment for INSPECTION_PROVIDER=real.
+# Vercel runs the real CPU ONNX provider. Python functions currently have a 500 MB
+# uncompressed limit; these native packages plus the 6 MB model stay below it.

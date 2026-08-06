@@ -15,6 +15,7 @@ from typing import Any
 
 from app.config import Settings, get_settings
 from app.database.migrations import verify_schema
+from app.database.mongo import is_mongo
 from app.providers import provider_error
 from app.repositories import inspection_repository as inspections
 from app.repositories import model_repository as models
@@ -157,6 +158,11 @@ def database_check(conn: sqlite3.Connection, settings: Settings) -> dict[str, An
             "Check permissions on the data folder.", "error",
         )
     try:
+        if is_mongo(conn):
+            conn.db.command("ping")
+            count = inspections.total_count(conn)
+            return _check("database", "Database", OK,
+                          f"MongoDB Atlas: {count:,} inspections stored.", "", "ok")
         missing = verify_schema(conn)
         if missing:
             return _check(

@@ -20,6 +20,10 @@ SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection with foreign keys on and rows returned as mappings."""
     settings = get_settings()
+    if settings.uses_mongodb:
+        from app.database.mongo import connect_mongo
+
+        return connect_mongo(settings)  # type: ignore[return-value]
     path = Path(db_path) if db_path else settings.db_file
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=15.0, check_same_thread=False)

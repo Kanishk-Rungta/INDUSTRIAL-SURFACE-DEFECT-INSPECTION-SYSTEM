@@ -11,8 +11,16 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from app.database.mongo import is_mongo, next_id
+
 
 def create(conn: sqlite3.Connection, values: dict[str, Any]) -> int:
+    if is_mongo(conn):
+        batch_run_id = next_id(conn, "batch_run")
+        material = conn.db.reference.find_one({"kind": "material", "material_id": values.get("material_id")}) or {}
+        conn.db.batches.insert_one({"batch_run_id": batch_run_id, **values,
+            "material_code": material.get("material_code"), "material_name": material.get("material_name")})
+        return batch_run_id
     cur = conn.execute(
         """
         INSERT INTO batch_run (source_folder, material_id, started_at, status, image_count)
@@ -32,6 +40,9 @@ def create(conn: sqlite3.Connection, values: dict[str, Any]) -> int:
 
 
 def finish(conn: sqlite3.Connection, batch_run_id: int, values: dict[str, Any]) -> None:
+    if is_mongo(conn):
+        conn.db.batches.update_one({"batch_run_id": batch_run_id}, {"$set": values})
+        return
     conn.execute(
         """
         UPDATE batch_run
@@ -52,6 +63,8 @@ def finish(conn: sqlite3.Connection, batch_run_id: int, values: dict[str, Any]) 
 
 
 def get(conn: sqlite3.Connection, batch_run_id: int) -> dict[str, Any] | None:
+    if is_mongo(conn):
+        return conn.db.batches.find_one({"batch_run_id": batch_run_id}, {"_id": 0})
     row = conn.execute(
         """
         SELECT b.*, m.material_code, m.material_name
@@ -64,6 +77,8 @@ def get(conn: sqlite3.Connection, batch_run_id: int) -> dict[str, Any] | None:
 
 
 def recent(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any]]:
+    if is_mongo(conn):
+        return list(conn.db.batches.find({}, {"_id": 0}).sort("batch_run_id", -1).limit(limit))
     rows = conn.execute(
         """
         SELECT b.*, m.material_code, m.material_name
@@ -76,5 +91,14 @@ def recent(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any]]:
 
 
 def latest_id(conn: sqlite3.Connection) -> int | None:
+    if is_mongo(conn):
+        row = conn.db.batches.find_one({}, {"batch_run_id": 1}, sort=[("batch_run_id", -1)])
+        return int(row["batch_run_id"]) if row else None
     row = conn.execute("SELECT MAX(batch_run_id) AS id FROM batch_run").fetchone()
     return int(row["id"]) if row and row["id"] is not None else None
+
+
+def count(conn: sqlite3.Connection) -> int:
+    if is_mongo(conn):
+        return int(conn.db.batches.count_documents({}))
+    return int(conn.execute("SELECT COUNT(*) AS n FROM batch_run").fetchone()["n"])

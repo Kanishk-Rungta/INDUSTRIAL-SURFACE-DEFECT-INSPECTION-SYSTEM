@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
+from app.database.mongo import is_mongo
 from app.providers import get_provider
 from app.providers.base import InspectionResult
 from app.repositories import inspection_repository as inspections
@@ -30,12 +31,10 @@ def _station_id(conn: sqlite3.Connection, station_code: str) -> int:
         return int(row["station_id"])
     now = datetime.now(UTC).isoformat(timespec="seconds")
     line = station_code.split("-cam")[0] if "-cam" in station_code else station_code
-    cur = conn.execute(
-        "INSERT INTO station (station_code, line_code, mm_per_pixel, camera_status, created_at) "
-        "VALUES (?, ?, NULL, 'ok', ?)",
-        [station_code, line, now],
-    )
-    return int(cur.lastrowid)
+    return models.create_station(conn, {
+        "station_code": station_code, "line_code": line, "mm_per_pixel": None,
+        "camera_status": "ok", "created_at": now,
+    })
 
 
 def append_record_log(settings: Settings, record: dict[str, Any]) -> None:
@@ -69,6 +68,14 @@ def store_result(
     if model is None:
         raise RuntimeError("No model_version row in the database - run the seed first.")
 
+    source_path = portable_media_path(result.source_image_path, settings)
+    overlay_path = portable_media_path(result.overlay_image_path, settings)
+    if is_mongo(conn):
+        from app.services import mongo_media
+
+        source_path = mongo_media.persist(conn, result.source_image_path, "source")
+        overlay_path = mongo_media.persist(conn, result.overlay_image_path, "overlay")
+
     inspection_id = inspections.insert(
         conn,
         {
@@ -84,8 +91,8 @@ def store_result(
             "status": result.status,
             "region_count": result.region_count,
             "latency_ms": result.latency_ms,
-            "source_image_path": portable_media_path(result.source_image_path, settings),
-            "overlay_image_path": portable_media_path(result.overlay_image_path, settings),
+            "source_image_path": source_path,
+            "overlay_image_path": overlay_path,
             "error_code": result.error_code,
             "error_message": result.error_message,
         },
@@ -278,6 +285,8 @@ def portable_media_path(raw: str | None, settings: Settings | None = None) -> st
     """
     if not raw:
         return None
+    if str(raw).startswith("mongodb:"):
+        return None
     settings = settings or get_settings()
     path = Path(raw).resolve()
     roots = (
@@ -312,13 +321,16 @@ def image_path_for(row: dict[str, Any], kind: str, settings: Settings | None = N
     if candidate.is_absolute():
         candidates = [candidate]
     else:
-        candidates = [settings.runtime_data_dir / raw, settings.bundled_data_dir / raw]
         # Absolute per-purpose roots are common in tests and operator configuration.
         # Stored paths retain their purpose prefix, so strip it when joining directly.
         purpose_root = settings.overlay_dir if kind == "overlay" else settings.source_dir
         purpose_prefix = "overlays/" if kind == "overlay" else "sources/"
         purpose_raw = raw[len(purpose_prefix):] if raw.startswith(purpose_prefix) else raw
-        candidates.append(purpose_root / purpose_raw)
+        candidates = [
+            purpose_root / purpose_raw,
+            settings.runtime_data_dir / raw,
+            settings.bundled_data_dir / raw,
+        ]
 
     roots = settings.media_roots
     for option in candidates:

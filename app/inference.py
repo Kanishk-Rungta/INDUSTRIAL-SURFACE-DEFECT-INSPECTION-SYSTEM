@@ -106,8 +106,7 @@ class Inspector:
         spec = meta.get("prep") or ""
         self.prep = None
         if spec:
-            sys.path.insert(0, str(ROOT / "bench"))
-            from preprocess import build
+            from app.model_preprocess import build
             self.prep = build(spec)
         self.prep_spec = spec
 

@@ -1,184 +1,164 @@
-# Local deployment (authoritative)
+# Vercel + MongoDB Atlas deployment
 
-The former Vercel/serverless demo is retired. The application runs as one persistent
-local FastAPI process with a local model, SQLite database, and local media directories.
-Use `uvicorn app.main:app --host 127.0.0.1 --port 8000`; see `LOCAL_SETUP.md` and the
-README. There is no ephemeral-filesystem mode and no remote inference endpoint.
+The UI, FastAPI backend, and real CPU ONNX inference deploy as **one Vercel project**.
+MongoDB Atlas is an external managed database, not another copy of this application.
+The FastAPI function connects to Atlas directly using a server-side `MONGODB_URI`.
 
-The historical material below is retained only as an architectural record and is not a
-supported deployment procedure.
+Do not create a second Vercel project for the backend. A second project would require
+cross-origin configuration, another public API boundary, two deployments, and an extra
+network hop. It provides no benefit while FastAPI already owns the pages and `/api/*`.
 
-Two very different things go under this heading, and it is worth being blunt about the
-difference before any of the commands below.
+## Production architecture
 
-| | Station deployment | Vercel deployment |
-|---|---|---|
-| What it is | The real system | A shareable demo of the interface |
-| Runs | CPU-only industrial PC on the line | Serverless functions |
-| Provider | `real` — the ONNX pipeline | `mock` only |
-| Network | None, by design (NFR-05) | Public internet |
-| Database | Persists | Resets on every cold start |
-| Purpose | Inspecting parts | Showing reviewers the screens |
-
-**Vercel cannot run the real system**, and this is not a limitation to work around — it
-is the point. The inference path deliberately opens no socket because factory images
-must not leave the site; that requirement and a public serverless host are incompatible
-by design. Use Vercel to show the interface. Ship the station on the industrial PC.
-
----
-
-## 1. Vercel (demo)
-
-### Why the application needed changes at all
-
-A serverless function has a **read-only filesystem apart from `/tmp`**, is **ephemeral**,
-and has a **short execution limit**. This application writes a SQLite database, generates
-images, and takes about three minutes to seed. Three changes make it work:
-
-| Problem | What the code does |
-|---|---|
-| Filesystem is read-only | Two data roots. `bundled_data_dir` (shipped, read-only) and `runtime_data_dir` (`/tmp`, writable). Set by `SERVERLESS=true` / the `VERCEL` env var. |
-| Seeding takes minutes, a cold start has seconds | The database is seeded **at build time** by `scripts/build_demo_bundle.py` and shipped. `lifespan` copies it into `/tmp` on the first request and never seeds on demand. |
-| A database built on one machine, read on another | Image paths are stored **relative to the data root**, so they resolve wherever the bundle lands. |
-| Background threads are frozen once a response is sent | Batch runs go synchronous when `is_serverless` — `settings.run_batches_synchronously`. |
-
-None of this touches the screens, the schema, the provider boundary or the tests.
-
-### Deploy
-
-```bash
-# 1. Build the demo bundle (locally — this is the slow part, ~2 minutes)
-python -m scripts.build_demo_bundle
-
-# 2. Check the reported size. It should print ~24 MB and confirm it is under the
-#    50 MB lambda limit set in vercel.json.
-
-# 3. Commit the bundle. data/inspection.db and the generated images are deliberately
-#    NOT gitignored for deployment — see the note in .gitignore.
-git add -f data/inspection.db data/sources data/overlays data/batches
-git commit -m "Build demo bundle"
-
-# 4. Deploy
-npm i -g vercel
-vercel            # preview
-vercel --prod     # production
+```text
+Browser -> one Vercel domain -> FastAPI Python Function -> MongoDB Atlas
+                                  |
+                                  +-> bundled model.onnx / ONNX Runtime CPU
 ```
 
-`vercel.json` routes every request to `api/index.py`, which exposes the same FastAPI
-application, and sets `INSPECTION_PROVIDER=mock`, `DEMO_MODE=true`, `SERVERLESS=true`.
+- `api/index.py` exports the FastAPI ASGI application.
+- `data/export/model.onnx` is bundled and verified by SHA-256 before inference.
+- `requirements.txt` includes ONNX Runtime, OpenCV, scikit-image, and PyMongo.
+- MongoDB stores inspection documents, embedded regions, batch sessions, reference
+  records, source images, and overlays.
+- The bundled SQLite database is used only to bootstrap stable materials, profiles,
+  classes, station, and model metadata into an empty MongoDB database.
+- No MongoDB credential is stored in Git or `vercel.json`.
 
-### What works on Vercel
+## 1. Create MongoDB Atlas
 
-All six screens, region navigation, history filtering and pagination, CSV and JSON
-exports, materials and thresholds, status checks and fault simulation, the demo
-"Next inspection" control, and batch runs over the three bundled folders.
+1. Create or sign in to a MongoDB Atlas account.
+2. Create a project and an M0/Flex or larger cluster.
+3. Under **Database Access**, create a dedicated application user. Give it
+   `readWrite` access to the `vision404` database; do not reuse your Atlas account.
+4. Use a long generated password. URL-encode special characters if manually inserting
+   the password into a connection URI.
+5. Under **Network Access**, allow connections from Vercel. Vercel deployments use
+   dynamic outbound addresses; the standard Atlas/Vercel integration uses
+   `0.0.0.0/0`. Authentication and TLS still apply. For stricter production networking,
+   use Vercel Secure Compute/static egress and allow only those addresses.
+6. Choose **Connect > Drivers > Python** and copy the `mongodb+srv://...` URI.
+7. Ensure the URI names or is paired with the database `vision404`.
 
-### What does not, and why
+Never paste the URI into source code, Git, screenshots, or chat messages.
 
-- **Writes do not persist.** Advancing the demo station or running a batch writes to
-  `/tmp` on one instance. A different instance, or the same one after a cold start, sees
-  the shipped database again. Fine for a demo; disqualifying for a station.
-- **Instances do not share state.** Two people clicking around may be on different
-  instances and see different results. There is no shared `/tmp`.
-- **The first request after a cold start is slow** — it copies the database and imports
-  NumPy and Pillow. Expect a second or two.
-- **Batch runs must be small.** They run inside the request, against the function
-  timeout (10 s on Hobby, 60 s on Pro). The bundled folders are 7, 5 and 4 images for
-  this reason. A 500-image run will time out.
-- **`INSPECTION_PROVIDER=real` will not work.** `onnxruntime` and `opencv-python-headless`
-  push the bundle past the size limit, and pointing a factory pipeline at a public host
-  contradicts NFR-05. The provider will refuse to start without a model file anyway.
+## 2. Prepare and test the repository
 
-### If the bundle is too large
+From the application root:
 
-```bash
-python -m scripts.build_demo_bundle --live 40 --cap 360
+```powershell
+python -m venv .venv-app
+.\.venv-app\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
 ```
 
-`--cap` sets the longest image edge. At `--live 60 --cap 480` the bundle is about 24 MB.
-The script warns above 40 MB.
+Confirm the model identity:
 
-### Alternatives worth considering
-
-For anything beyond a demo, a container on a small VM keeps the application intact — a
-persistent disk, real background threads, full-size images, and the option of running
-the real provider on a machine you control. `python -m app.main` behind nginx is the
-whole deployment. Fly.io, Railway and Render all take a Dockerfile; none of them require
-the changes above.
-
----
-
-## 2. Station deployment (the real system)
-
-The target is a **CPU-only industrial PC that is also running line software**. One unit
-per station; units share nothing at runtime, so stations do not contend.
-
-```bash
-git clone <repo> /opt/vision404
-cd /opt/vision404
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/pip install onnxruntime opencv-python-headless scikit-image
-
-cp .env.example .env
+```powershell
+Get-FileHash data\export\model.onnx -Algorithm SHA256
 ```
 
-```env
-INSPECTION_PROVIDER=real
-MODEL_PATH=/opt/vision404/data/export/smpslim_timm-mobilenetv3_small_100_v8a.onnx
-MODEL_SHA256=<sha256 of that file>
-STATION_ID=line-1-cam-A
-DEMO_MODE=false
-MIN_FREE_DISK_GB=20
+Expected SHA-256:
+
+```text
+DF411260E21EC6361E97D4754B0C3F6920B7F5C2F6EC32C034CEF17C3576B42D
 ```
 
-`DEMO_MODE=false` removes the "Next inspection" control and the fault simulation: on a
-line, the line advances the station.
+Review and commit the deployment files and model. The model was previously ignored,
+so explicitly verify it is staged:
 
-Run under systemd:
-
-```ini
-[Unit]
-Description=Surface Defect Inspection (line-1-cam-A)
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/vision404
-ExecStart=/opt/vision404/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-Restart=always
-User=inspection
-
-[Install]
-WantedBy=multi-user.target
+```powershell
+git add .gitignore .vercelignore vercel.json api app docs tests
+git add requirements.txt requirements-dev.txt README.md .env.example
+git add -f data/export/model.onnx
+git status
+git commit -m "Deploy real model with MongoDB persistence on Vercel"
+git push
 ```
 
-Bind to `127.0.0.1` unless the interface genuinely needs to be reachable from another
-machine on the line network. There is no login and no user accounts — the system cannot
-attribute an action to a person, which is a real limitation and a deliberate consequence
-of dropping the verdict.
+Do not add `.env`. Review the pre-existing `data/inspection.db` modification separately
+before deciding whether it belongs in the commit.
 
-### Verify after install
+## 3. Create the one Vercel project
 
-```bash
-python -m pytest                       # 250 tests
-curl localhost:8000/api/status         # every check should report ok
+1. In Vercel, select **Add New > Project** and import the Git repository.
+2. If this application is nested, set Root Directory to
+   `INDUSTRIAL-SURFACE-DEFECT-INSPECTION-SYSTEM`; otherwise leave it unchanged.
+3. Use Framework Preset **Other**.
+4. Leave Build Command and Output Directory empty.
+5. In **Environment Variables**, add:
+
+```text
+MONGODB_URI=mongodb+srv://APP_USER:URL_ENCODED_PASSWORD@CLUSTER.mongodb.net/?retryWrites=true&w=majority
 ```
 
-Confirm on the Status screen that **Model file / hash** reads `verified`. If it reports a
-mismatch, inspection is stopped by design — the system will not produce results from a
-file it cannot identify (T-23).
+Apply it to Production and Preview (and Development only if you want `vercel dev` to
+use Atlas). `MONGODB_DATABASE=vision404` and the non-secret model settings are already
+in `vercel.json`.
 
-### Offline check (T-20)
+6. Deploy. If you added the variable after the first deployment, redeploy; existing
+   deployments do not acquire newly added values automatically.
 
-Disable the network and run a live inspection and a batch run. Both must finish. Nothing
-in the inference path or the interface opens a socket: onnxruntime on CPU, a local
-weights file, locally served CSS and JavaScript, no CDN and no web font.
+The application intentionally refuses to start a real Vercel deployment without
+`MONGODB_URI`, preventing an accidental fallback to ephemeral SQLite.
 
-### Ongoing
+## 4. Verify
 
-- **Disk** is a status check. Below `MIN_FREE_DISK_GB` the run stops rather than dropping
-  records silently. Retention (48 h for clean images, 90 days where regions were found)
-  is a scheduled job — see DATABASE.md; it is not automated in this build.
-- **Backups**: copy `data/inspection.db` and `data/records.jsonl` on a schedule from a
-  separate machine. The line never waits for it.
-- **New weights**: swap the `.onnx`, record the new hash in `MODEL_SHA256` and in
-  `model_version`, restart. No code change unless the input or output shape changes.
+Open:
+
+```text
+https://YOUR-PROJECT.vercel.app/healthz
+https://YOUR-PROJECT.vercel.app/status
+https://YOUR-PROJECT.vercel.app/capture
+https://YOUR-PROJECT.vercel.app/history
+https://YOUR-PROJECT.vercel.app/analytics
+```
+
+Expected health response:
+
+```json
+{"status":"ok","provider":"real"}
+```
+
+On Status, confirm:
+
+- Inference provider: real
+- Model file/hash: verified
+- Database: MongoDB Atlas
+- Camera/station: registered
+
+Upload a PNG or JPEG smaller than 4 MB, wait for CPU inference, then confirm the result
+appears in History after refreshing or opening a new browser session. Source and
+overlay images should also load after a cold start.
+
+## Limits and troubleshooting
+
+- Vercel Function request and response bodies are limited to 4.5 MB, so the application
+  advertises a 4 MB upload ceiling in production.
+- CPU inference can cold-start slowly. The function duration is set to 60 seconds;
+  large images or batches can still time out.
+- Batch work is synchronous on Vercel because background threads are not durable after
+  a response. Keep bundled batches small.
+- If deployment reports a bundle-size error, inspect native dependencies and Vercel's
+  function output. Python functions currently have a 500 MB uncompressed bundle limit.
+- `Model hash mismatch` means the committed artefact differs from `MODEL_SHA256`. Do
+  not bypass it; update both only when intentionally deploying a new measured model.
+- MongoDB connection timeouts usually mean the Atlas IP access list, URI credentials,
+  database user permissions, or URL encoding is wrong.
+- View runtime errors in the Vercel project under **Logs**.
+
+## CLI deployment alternative
+
+```powershell
+npm install --global vercel
+vercel login
+vercel env add MONGODB_URI production
+vercel env add MONGODB_URI preview
+vercel
+vercel --prod
+```
+
+Enter the URI only when the CLI prompts; do not put it on the command line because
+shell history can retain it.

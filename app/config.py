@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     #: serverless host, where a background thread is frozen once the response is sent.
     batch_synchronous: bool = False
 
+    #: Explicit override for serverless deployments. Vercel also sets VERCEL=1, so
+    #: users normally do not need to set this themselves.
+    serverless: bool = False
+
+    # MongoDB Atlas is the persistent production store. The URI is intentionally
+    # environment-only and must never be committed.
+    mongodb_uri: str = ""
+    mongodb_database: str = "vision404"
+
     @field_validator("inspection_provider")
     @classmethod
     def _check_provider(cls, v: str) -> str:
@@ -98,6 +107,8 @@ class Settings(BaseSettings):
 
     @property
     def runtime_data_dir(self) -> Path:
+        if self.is_serverless:
+            return Path(os.environ.get("VISION404_TMP_DIR", "/tmp/vision404"))
         return self.bundled_data_dir
 
     def _runtime(self, configured: Path) -> Path:
@@ -181,8 +192,16 @@ class Settings(BaseSettings):
         return self.inspection_provider == "mock"
 
     @property
+    def is_serverless(self) -> bool:
+        return self.serverless or bool(os.environ.get("VERCEL"))
+
+    @property
+    def uses_mongodb(self) -> bool:
+        return bool(self.mongodb_uri.strip())
+
+    @property
     def run_batches_synchronously(self) -> bool:
-        return self.batch_synchronous
+        return self.batch_synchronous or self.is_serverless
 
     def ensure_dirs(self) -> None:
         for d in (
@@ -192,8 +211,6 @@ class Settings(BaseSettings):
             self.source_dir,
             self.export_dir,
             self.log_dir,
-            self.metrics_file.parent,
-            self.model_file.parent,
         ):
             d.mkdir(parents=True, exist_ok=True)
 

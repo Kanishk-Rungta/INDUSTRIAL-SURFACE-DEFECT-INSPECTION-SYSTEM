@@ -199,6 +199,34 @@ class RealInspectionProvider:
                     record={"provider": self.name, "error_code": "image_decode_failed"},
                 )
 
+        # Mapping tests inject an opaque frame into a fake Inspector; production
+        # decoders and the real Inspector always supply a NumPy image with ``shape``.
+        if image_bgr is not None and hasattr(image_bgr, "shape"):
+            height, width = image_bgr.shape[:2]
+            if not (
+                self.settings.min_image_width <= width <= self.settings.max_image_width
+                and self.settings.min_image_height <= height <= self.settings.max_image_height
+            ):
+                elapsed = (datetime.now(UTC) - started).total_seconds() * 1000.0
+                return InspectionResult(
+                    status=STATUS_ACQUISITION_FAILURE,
+                    empty=False,
+                    product_id=product_id,
+                    material=material,
+                    station_id=station_id or self.station_id,
+                    image_sha256=(hashlib.sha256(image_bytes).hexdigest() if image_bytes else None),
+                    captured_at=captured.isoformat(timespec="milliseconds"),
+                    processed_at=datetime.now(UTC).astimezone().isoformat(timespec="milliseconds"),
+                    latency_ms=round(elapsed, 2),
+                    error_code="image_dimensions_invalid",
+                    error_message=(
+                        f"Image is {width}x{height}; allowed dimensions are "
+                        f"{self.settings.min_image_width}-{self.settings.max_image_width} by "
+                        f"{self.settings.min_image_height}-{self.settings.max_image_height} pixels."
+                    ),
+                    record={"provider": self.name, "error_code": "image_dimensions_invalid"},
+                )
+
         try:
             record, overlay_bgr, class_map = self._inspector.inspect(
                 image_bgr, image_bytes, product_id=product_id, material=material

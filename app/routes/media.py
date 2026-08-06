@@ -19,7 +19,7 @@ from app.config import Settings
 from app.dependencies import get_db, settings_dep
 from app.providers import mock_assets
 from app.repositories import inspection_repository as inspections
-from app.services import inspection_service
+from app.services import inspection_service, mongo_media
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -39,10 +39,14 @@ def inspection_image(
     kind: str,
     conn: sqlite3.Connection = Depends(get_db),
     settings: Settings = Depends(settings_dep),
-) -> FileResponse:
+) -> Response:
     if kind not in ("source", "overlay"):
         raise HTTPException(status_code=404, detail="Unknown image kind")
     row = _row(conn, inspection_id)
+    stored = row.get("overlay_image_path" if kind == "overlay" else "source_image_path")
+    mongo = mongo_media.load(conn, stored) if hasattr(conn, "db") else None
+    if mongo:
+        return Response(content=mongo[0], media_type=mongo[1], headers=CACHE)
     path = inspection_service.image_path_for(row, kind, settings)
     if path is None:
         raise HTTPException(
@@ -71,15 +75,20 @@ def region_crop(
     if region is None:
         raise HTTPException(status_code=404, detail=f"No region {region_index}")
 
+    stored = row.get("overlay_image_path" if mode == "overlay" else "source_image_path")
+    mongo = mongo_media.load(conn, stored) if hasattr(conn, "db") else None
     path = inspection_service.image_path_for(row, mode, settings)
     if path is None:
+        if mongo is None:
+            source_stored = row.get("source_image_path")
+            mongo = mongo_media.load(conn, source_stored) if hasattr(conn, "db") else None
         path = inspection_service.image_path_for(row, "source", settings)
-    if path is None:
+    if path is None and mongo is None:
         raise HTTPException(status_code=404, detail="No image stored for this inspection")
 
     from PIL import Image
 
-    image = Image.open(path).convert("RGB")
+    image = Image.open(io.BytesIO(mongo[0]) if mongo else path).convert("RGB")
     bbox = (region["bbox_x"], region["bbox_y"], region["bbox_width"], region["bbox_height"])
     crop = mock_assets.crop_region(image, bbox, zoom=zoom)
     buffer = io.BytesIO()
