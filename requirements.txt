@@ -16,7 +16,6 @@ pillow>=10.3
 pymongo>=4.10,<5.0
 onnxruntime>=1.18
 opencv-python-headless>=4.10
-scikit-image>=0.24
 
-# Vercel runs the real CPU ONNX provider. Python functions currently have a 500 MB
-# uncompressed limit; these native packages plus the 6 MB model stay below it.
+# Vercel runs the real CPU ONNX provider. Skeletonization is implemented locally so
+# scikit-image/SciPy do not inflate the serverless bundle.

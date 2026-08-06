@@ -13,4 +13,3 @@
 # project was measured against are recorded in the Phase 2 report.
 onnxruntime>=1.18
 opencv-python-headless>=4.10
-scikit-image>=0.24

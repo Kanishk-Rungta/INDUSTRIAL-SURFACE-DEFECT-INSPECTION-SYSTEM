@@ -52,9 +52,7 @@ def _skeleton(mask):
 
     Summing skeleton pixels would understate a diagonal defect by ~41 %.
     """
-    from skimage.morphology import skeletonize
-
-    skel = skeletonize(mask.astype(bool))
+    skel = _thin(mask)
     if not skel.any():
         return skel, 0.0
     s = skel.astype(np.uint8)
@@ -62,6 +60,51 @@ def _skeleton(mask):
     diag = int((s[:-1, :-1] & s[1:, 1:]).sum()) + int((s[:-1, 1:] & s[1:, :-1]).sum())
     # An isolated pixel has no links; report its own extent rather than zero.
     return skel, (ortho + diag * np.sqrt(2.0)) or 1.0
+
+
+def _thin(mask):
+    """Zhang-Suen thinning using NumPy only.
+
+    The previous implementation imported all of scikit-image (and therefore SciPy)
+    for this one operation, adding roughly 135 MB to the deployed function. This
+    standard two-pass thinning algorithm preserves connected one-pixel centrelines
+    without another native dependency.
+    """
+    image = np.pad(mask.astype(bool), 1)
+    changed = True
+    while changed:
+        changed = False
+        for second_pass in (False, True):
+            p2 = image[:-2, 1:-1]
+            p3 = image[:-2, 2:]
+            p4 = image[1:-1, 2:]
+            p5 = image[2:, 2:]
+            p6 = image[2:, 1:-1]
+            p7 = image[2:, :-2]
+            p8 = image[1:-1, :-2]
+            p9 = image[:-2, :-2]
+            centre = image[1:-1, 1:-1]
+            neighbours = p2.astype(np.uint8) + p3 + p4 + p5 + p6 + p7 + p8 + p9
+            transitions = (
+                (~p2 & p3).astype(np.uint8)
+                + (~p3 & p4)
+                + (~p4 & p5)
+                + (~p5 & p6)
+                + (~p6 & p7)
+                + (~p7 & p8)
+                + (~p8 & p9)
+                + (~p9 & p2)
+            )
+            topology = (
+                ~(p2 & p4 & p8) & ~(p2 & p6 & p8)
+                if second_pass
+                else ~(p2 & p4 & p6) & ~(p4 & p6 & p8)
+            )
+            remove = centre & (neighbours >= 2) & (neighbours <= 6) & (transitions == 1) & topology
+            if remove.any():
+                centre[remove] = False
+                changed = True
+    return image[1:-1, 1:-1]
 
 
 def _max_width(mask, skel):

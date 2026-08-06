@@ -15,7 +15,6 @@ dependencies = [
   "pymongo>=4.10,<5.0",
   "onnxruntime>=1.18",
   "opencv-python-headless>=4.10",
-  "scikit-image>=0.24",
 ]
 
 [tool.ruff]

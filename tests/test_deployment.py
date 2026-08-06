@@ -40,14 +40,16 @@ def test_vercel_entry_and_configuration_exist():
 def test_vercel_requirements_include_real_inference_and_mongodb():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
     assert "fastapi" in requirements
-    for dependency in ("pymongo", "onnxruntime", "opencv-python-headless", "scikit-image"):
+    for dependency in ("pymongo", "onnxruntime", "opencv-python-headless"):
         assert dependency in requirements
+    assert not any(line.strip().startswith("scikit-image") for line in requirements.splitlines())
 
 
 def test_pyproject_declares_vercel_runtime_dependencies():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
-    for dependency in ("fastapi", "pymongo", "onnxruntime", "opencv-python-headless", "scikit-image"):
+    for dependency in ("fastapi", "pymongo", "onnxruntime", "opencv-python-headless"):
         assert dependency in pyproject
+    assert "scikit-image" not in pyproject
 
 
 def test_vercel_config_uses_real_bundled_model():

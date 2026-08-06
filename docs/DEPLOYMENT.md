@@ -18,7 +18,8 @@ Browser -> one Vercel domain -> FastAPI Python Function -> MongoDB Atlas
 
 - `api/index.py` exports the FastAPI ASGI application.
 - `data/export/model.onnx` is bundled and verified by SHA-256 before inference.
-- `requirements.txt` includes ONNX Runtime, OpenCV, scikit-image, and PyMongo.
+- `requirements.txt` includes ONNX Runtime, OpenCV, and PyMongo. Centreline
+  skeletonization is implemented locally to keep scikit-image/SciPy out of the bundle.
 - MongoDB stores inspection documents, embedded regions, batch sessions, reference
   records, source images, and overlays.
 - The bundled SQLite database is used only to bootstrap stable materials, profiles,
