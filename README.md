@@ -569,6 +569,10 @@ automatically free of that restriction.
 
 ## Deployment status
 
-Vercel and other serverless deployment paths are retired. The supported deployment is
-a persistent local FastAPI process with a local ONNX model, SQLite database and local
-media directories. Normal inspection requires no internet connection.
+Two supported deployments, not interchangeable. The station is a persistent local
+FastAPI process with a local ONNX model, SQLite database and local media directories;
+normal inspection requires no internet connection. A `Dockerfile` also builds a
+mock-mode container for a public demo of the interface — every screen including
+Analytics, no real inference, no factory image ever leaves this repository's control —
+deployable to Render's free tier via the included `render.yaml` blueprint. See
+`docs/DEPLOYMENT.md` for both. Vercel and other serverless paths are retired.
