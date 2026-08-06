@@ -69,22 +69,28 @@ def test_mongodb_is_selected_only_when_uri_is_configured():
 def test_missing_mongodb_uri_returns_diagnostic_instead_of_crashing(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    from app.config import reset_settings_cache
-    from app.main import create_app
+    from app import main as main_module
+    from app.config import Settings
 
-    monkeypatch.setenv("VERCEL", "1")
-    monkeypatch.setenv("INSPECTION_PROVIDER", "real")
-    monkeypatch.setenv("MONGODB_URI", "")
-    monkeypatch.setenv("VISION404_TMP_DIR", str(tmp_path / "vercel-runtime"))
-    reset_settings_cache()
-    try:
-        with TestClient(create_app()) as client:
-            response = client.get("/healthz")
-            assert response.status_code == 503
-            assert response.json()["status"] == "configuration_error"
-            assert "MONGODB_URI" in response.json()["detail"]
-    finally:
-        reset_settings_cache()
+    runtime = tmp_path / "vercel-runtime"
+    settings = Settings(
+        _env_file=None,
+        serverless=True,
+        inspection_provider="real",
+        mongodb_uri="",
+        database_path=runtime / "inspection.db",
+        source_root=runtime / "sources",
+        overlay_root=runtime / "overlays",
+        export_root=runtime / "exports",
+        batch_root=runtime / "batches",
+        log_root=runtime / "logs",
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    with TestClient(main_module.create_app()) as client:
+        response = client.get("/healthz")
+        assert response.status_code == 503
+        assert response.json()["status"] == "configuration_error"
+        assert "MONGODB_URI" in response.json()["detail"]
 
 
 def test_serverless_paths_use_tmp(monkeypatch):
