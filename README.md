@@ -17,17 +17,26 @@ The model currently installed in this workspace is:
 |---|---|
 | Version | `V12_22` |
 | File | `data/export/model.onnx` |
-| SHA-256 | `df411260e21ec6361e97d4754b0c3f6920b7f5c2f6ec32c034cef17c3576b42d` |
+| SHA-256 | `9c64fc49f66f4dea9518664e45404da5052e828df8cca0aa42168cc5b5a34fa7` |
 | Architecture | MobileNetV3-Small encoder with slim U-Net decoder |
 | Parameters | 1,432,000 |
+| Size | 5.85 MB, float32, self-contained (no external `.onnx.data`) |
 | Input | Dynamic batch, `3 x 256 x 256` float32 |
 | Output | Background, crack and scratch logits |
 | Preprocessing | Whole-frame resize and bilateral filter, then ImageNet normalization |
-| Measured ONNX latency | 54.4 ms, one local CPU thread |
+| Measured ONNX latency | 27.4 ms, one local CPU thread |
+
+This branch ships a **re-export** of `model.pt` produced by `bench/export_onnx.py`
+with the documented contract (`--classes 3 --tag V12_22 --resize --size 256 --prep
+bilateral`). It is functionally equivalent to the earlier export but byte-different —
+a different torch/onnx toolchain emits a different graph encoding — so the hash above
+differs from the one recorded before. The weights were merged back out of the sidecar
+`.onnx.data` the exporter emits, so the SHA-256 covers the weights and not just the
+graph structure.
 
 The exported graph was compared with its PyTorch checkpoint before activation:
 
-- Maximum absolute logit difference: `1.91e-05`
+- Maximum absolute logit difference: `2.10e-05`
 - Per-pixel argmax agreement: `1.00000`
 
 The application still uses per-class calibrated threshold rules rather than plain
@@ -173,7 +182,7 @@ INSPECTION_PROVIDER=real
 DEMO_MODE=false
 
 MODEL_PATH=data/export/model.onnx
-MODEL_SHA256=df411260e21ec6361e97d4754b0c3f6920b7f5c2f6ec32c034cef17c3576b42d
+MODEL_SHA256=9c64fc49f66f4dea9518664e45404da5052e828df8cca0aa42168cc5b5a34fa7
 STATION_ID=line-1-cam-A
 
 DATABASE_PATH=data/inspection.db
@@ -468,7 +477,7 @@ Confirm that these `.env` values match the installed model:
 ```dotenv
 INSPECTION_PROVIDER=real
 MODEL_PATH=data/export/model.onnx
-MODEL_SHA256=df411260e21ec6361e97d4754b0c3f6920b7f5c2f6ec32c034cef17c3576b42d
+MODEL_SHA256=9c64fc49f66f4dea9518664e45404da5052e828df8cca0aa42168cc5b5a34fa7
 ```
 
 Then restart the application. Settings and the model provider are loaded when the
@@ -569,10 +578,21 @@ automatically free of that restriction.
 
 ## Deployment status
 
-Two supported deployments, not interchangeable. The station is a persistent local
-FastAPI process with a local ONNX model, SQLite database and local media directories;
-normal inspection requires no internet connection. A `Dockerfile` also builds a
-mock-mode container for a public demo of the interface — every screen including
-Analytics, no real inference, no factory image ever leaves this repository's control —
-deployable to Render's free tier via the included `render.yaml` blueprint. See
-`docs/DEPLOYMENT.md` for both. Vercel and other serverless paths are retired.
+Two supported deployments, both running the real ONNX pipeline.
+
+The **station** is a persistent local FastAPI process with a local model, SQLite
+database and local media directories; normal inspection requires no internet
+connection.
+
+The **hosted container** (`Dockerfile` + `render.yaml`, this branch) runs the same
+application with the same model on a public host — uploads, browser-camera capture,
+live inspection and batch runs all produce real model output, and the pre-loaded
+history is generated sample data so History and Analytics have something to show. It
+deploys to Render's free tier as a Blueprint with no manual configuration; Render's
+HTTPS is what lets the browser camera work there.
+
+The difference is not the code, it is where it runs: a public host means images travel
+over the internet, which is exactly what the station's offline guarantee (NFR-05)
+exists to prevent. Do not point a production line at a hosted deployment.
+
+See `docs/DEPLOYMENT.md` for both. Vercel and other serverless paths are retired.
