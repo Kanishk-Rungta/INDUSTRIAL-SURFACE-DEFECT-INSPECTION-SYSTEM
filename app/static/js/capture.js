@@ -175,9 +175,10 @@
         return;
       }
       showPreview(blob);
-      pendingFile = new File([blob], "frame.png", { type: "image/png" });
+      pendingFile = blob;
       retakeBtn.disabled = false;
-      setStatus("Frame captured. Inspect it or retake.");
+      setStatus("Frame captured. Inspecting…");
+      submit(blob, "frame.png", "camera");
     }, "image/png");
   }
 
@@ -379,7 +380,10 @@
   flipBtn.addEventListener("click", flipCamera);
   shootBtn.addEventListener("click", shoot);
   inspectBtn.addEventListener("click", function () {
-    if (pendingFile) { submit(pendingFile, pendingFile.name, pendingFile.name === "frame.png" ? "camera" : "upload"); }
+    if (pendingFile) {
+      var name = pendingFile.name || "frame.png";
+      submit(pendingFile, name, pendingFile.name ? "upload" : "camera");
+    }
   });
   removeBtn.addEventListener("click", clearPreview);
   retakeBtn.addEventListener("click", clearPreview);

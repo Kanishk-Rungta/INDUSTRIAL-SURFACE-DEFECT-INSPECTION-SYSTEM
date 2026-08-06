@@ -40,7 +40,8 @@ pipeline.
 - Real ONNX inference on CPU
 - PNG and JPEG upload with drag-and-drop
 - File preview, remove and replace controls
-- Manual browser-camera capture with device selection and retake
+- Manual browser-camera capture with device selection, immediate inspection and retake
+- Rate-limited automatic live camera inspection with non-overlapping requests
 - One API and one inference path for camera, upload and batch images
 - Original, overlay and side-by-side result views
 - Pixel-level masks and source-resolution overlays
@@ -276,13 +277,23 @@ The browser sends the original file bytes. It does not resize or recompress the 
 2. Choose the material and enter the product metadata.
 3. Click **Start camera** and grant browser permission.
 4. Select another camera if required.
-5. Click **Capture frame**.
-6. Review the still image, then inspect or retake it.
+5. Click **Capture frame**; the still image is inspected immediately.
+6. Review the stored result or retake the frame.
 7. Stop the camera when finished.
 
 Camera permission is requested only after **Start camera** is clicked. Frames are not
 uploaded continuously. The selected frame is sent only when the operator requests an
 inspection, and all MediaStream tracks are stopped when leaving the page.
+
+### Run automatic live inspection
+
+1. Open **Live**.
+2. Select the material, product prefix and camera device.
+3. Click **Start live inspection** and grant camera permission.
+4. Keep **Inspect automatically** enabled.
+5. The application submits one frame at the configured interval and updates the result
+   in place. A new request never starts while the previous inference is running.
+6. Click **Stop live inspection** when finished.
 
 ### Process a batch
 
@@ -440,10 +451,10 @@ python -m compileall -q app tests
 node --check app/static/js/capture.js
 ```
 
-The latest executed suite collected 273 tests: 250 passed and 23 browser tests were
-skipped because the Chromium binary was not installed. Real-model smoke testing also
-succeeded through `POST /api/inspections`, producing stored inspection 86 with four
-regions.
+The latest executed default suite collected 284 tests and all 284 passed, including 25
+tests in real headless Chromium and 9 canonical inference-pipeline regression tests.
+Real-model verification also produced a source-resolution 400 x 400 overlay and class
+map with four regions from the installed ONNX graph.
 
 ## Troubleshooting
 

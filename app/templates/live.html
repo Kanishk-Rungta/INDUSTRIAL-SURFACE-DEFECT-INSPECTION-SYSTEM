@@ -23,6 +23,51 @@
   </div>
 {% endif %}
 
+<section class="panel live-camera" id="live-camera-root"
+         data-poll-ms="{{ poll_ms }}"
+         data-station="{{ station }}"
+         data-blocked="{{ 'true' if health.blocks_inspection else 'false' }}">
+  <h2 class="panel__title">Automatic live camera inspection</h2>
+  <p class="field__hint">
+    Camera access starts only when requested. While running, one frame is inspected at
+    a time using the same backend pipeline as uploads; requests never overlap.
+  </p>
+  <div class="filter-bar">
+    <div class="field">
+      <label for="live-material">Material</label>
+      <select id="live-material">
+        <option value="steel">Steel</option>
+        <option value="ceramic">Ceramic</option>
+        <option value="plastic">Plastic</option>
+        <option value="epoxy">Epoxy</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="live-product">Product ID prefix</label>
+      <input id="live-product" type="text" value="live" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="live-camera-device">Camera device</label>
+      <select id="live-camera-device"><option value="">Default camera</option></select>
+    </div>
+  </div>
+  <div class="capture__stage live-camera__stage">
+    <video id="live-camera-video" class="capture__video" playsinline muted hidden></video>
+    <canvas id="live-camera-canvas" hidden></canvas>
+    <p class="capture__placeholder" id="live-camera-placeholder">The live camera is stopped.</p>
+  </div>
+  <div class="button-row">
+    <button type="button" class="button button--primary" id="live-camera-start">Start live inspection</button>
+    <button type="button" class="button" id="live-camera-stop" disabled>Stop live inspection</button>
+    <label class="toggle">
+      <input type="checkbox" id="live-camera-auto" checked>
+      <span>Inspect automatically</span>
+    </label>
+  </div>
+  <p class="field__hint" id="live-camera-status" role="status" aria-live="polite"></p>
+  <p class="form-error" id="live-camera-error" role="alert" hidden></p>
+</section>
+
 {% if view %}
 <div class="live" id="live-root" data-inspection-id="{{ view.inspection.inspection_id }}" data-poll-ms="{{ poll_ms }}">
   <section class="live__image panel" aria-label="Overlay">

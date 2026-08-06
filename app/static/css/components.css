@@ -336,3 +336,6 @@
 }
 .capture__drop--over { border-style: solid; background: var(--panel-head); }
 .capture__drop .field__hint { margin: 0; }
+
+.live-camera { margin-bottom: var(--sp-4); }
+.live-camera__stage { margin: var(--sp-3) 0; max-height: 440px; overflow: hidden; }

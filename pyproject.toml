@@ -39,7 +39,11 @@ ignore = [
 "app/test_pipeline.py" = ["I001"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Keep the canonical model-pipeline regression tests in the default suite. They live
+# beside the Python 3.9-compatible inference core rather than under tests/ because the
+# training and web environments both execute them.
+testpaths = ["tests", "app"]
+python_files = ["test_*.py", "test_pipeline.py"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = ["ui: browser tests that need Playwright and a browser binary"]

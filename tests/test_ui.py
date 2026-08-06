@@ -89,6 +89,78 @@ def page(browser):
     context.close()
 
 
+def install_fake_camera(page):
+    """Provide a deterministic camera frame without requiring physical hardware."""
+    page.add_init_script(
+        """
+        (() => {
+          const track = { stop() { window.__cameraTrackStopped = true; } };
+          const stream = { getTracks() { return [track]; } };
+          Object.defineProperty(navigator, 'mediaDevices', {
+            configurable: true,
+            value: {
+              getUserMedia: async () => stream,
+              enumerateDevices: async () => [
+                { kind: 'videoinput', deviceId: 'fake-camera', label: 'Test camera' }
+              ]
+            }
+          });
+          Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
+            configurable: true, get() { return 320; }
+          });
+          Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', {
+            configurable: true, get() { return 240; }
+          });
+          Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+            configurable: true,
+            get() { return this.__testStream || null; },
+            set(value) { this.__testStream = value; }
+          });
+          HTMLMediaElement.prototype.play = async function () {};
+          CanvasRenderingContext2D.prototype.drawImage = function () {};
+          HTMLCanvasElement.prototype.toBlob = function (callback) {
+            const bytes = Uint8Array.from([
+              137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,
+              0,0,0,1,0,0,0,1,8,2,0,0,0,144,119,83,222,
+              0,0,0,12,73,68,65,84,8,215,99,248,207,192,0,0,
+              3,1,1,0,24,221,141,184,0,0,0,0,73,69,78,68,
+              174,66,96,130
+            ]);
+            callback(new Blob([bytes], { type: 'image/png' }));
+          };
+        })();
+        """
+    )
+
+
+def test_capture_frame_immediately_inspects_camera_image(page, live_server):
+    install_fake_camera(page)
+    page.goto(f"{live_server}/capture")
+    page.click("#camera-start")
+    page.wait_for_function("!document.querySelector('#camera-shoot').disabled")
+    page.click("#camera-shoot")
+    page.wait_for_function(
+        "document.querySelector('#capture-status').textContent.includes('Stored as inspection')"
+    )
+    assert page.locator("#capture-result").is_visible()
+    assert page.locator("#capture-preview").is_visible()
+
+
+def test_live_camera_automatically_inspects_and_renders(page, live_server):
+    install_fake_camera(page)
+    page.goto(f"{live_server}/live")
+    previous = page.get_attribute("#live-root", "data-inspection-id")
+    page.click("#live-camera-start")
+    page.wait_for_function(
+        "document.querySelector('#live-camera-status').textContent.includes('Showing inspection')"
+    )
+    current = page.get_attribute("#live-root", "data-inspection-id")
+    assert current != previous
+    assert page.locator("#live-camera-video").is_visible()
+    page.click("#live-camera-stop")
+    assert page.evaluate("window.__cameraTrackStopped") is True
+
+
 # -- navigation ---------------------------------------------------------------
 def test_navigation_reaches_every_screen_in_one_click(page, live_server):
     page.goto(f"{live_server}/live")
